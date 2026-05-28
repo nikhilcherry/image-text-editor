@@ -98,15 +98,43 @@ class WordReplacer:
         x0, y0, x1, y1 = box
 
         if precise:
-            # Tesseract box is tight to the word → fill it as a rectangle for a
-            # clean, complete erase (small pad). It only covers the word, so
-            # neighbouring lines stay untouched.
-            pad = 3
-            mx0, my0 = max(0, x0 - pad), max(0, y0 - pad)
-            mx1, my1 = min(W, x1 + pad), min(H, y1 + pad)
+            # Tesseract gives an accurate location but sometimes UNDER-boxes
+            # tall/bold text (e.g. it reported h=15 for date digits that are
+            # really h=34). So snap the mask to the actual ink extent inside a
+            # window around the box — but stop at blank rows/cols so we don't
+            # bleed into the line above/below.
+            bh = max(1, y1 - y0)
+            wy0, wy1 = max(0, y0 - bh), min(H, y1 + bh)
+            wx0, wx1 = max(0, x0 - 4), min(W, x1 + 4)
+            gray = cv2.cvtColor(img[wy0:wy1, wx0:wx1], cv2.COLOR_RGB2GRAY).astype(np.float32)
+            bgw = cv2.GaussianBlur(gray, (0, 0), sigmaX=max(3, (wx1 - wx0) // 8))
+            ink = np.abs(gray - bgw) > 22
+
+            cx0, cx1 = x0 - wx0, x1 - wx0          # box x-range in window coords
+            rows = ink[:, cx0:cx1].sum(axis=1).astype(float)
+            rthr = max(2, (cx1 - cx0) * 0.08)
+            cy = (y0 + y1) // 2 - wy0               # box centre in window coords
+            cy = min(max(cy, 0), len(rows) - 1)
+            # grow up/down from the centre while rows have ink (allow 1px gaps)
+            ty0 = cy
+            while ty0 > 0 and (rows[ty0 - 1] > rthr or rows[max(0, ty0 - 2)] > rthr):
+                ty0 -= 1
+            ty1 = cy
+            while ty1 < len(rows) - 1 and (rows[ty1 + 1] > rthr or rows[min(len(rows) - 1, ty1 + 2)] > rthr):
+                ty1 += 1
+            band = ink[ty0:ty1 + 1, :]
+            cols = band.sum(axis=0)
+            xs = np.where(cols >= 2)[0]
             mask = np.zeros((H, W), dtype=np.uint8)
-            mask[my0:my1, mx0:mx1] = 255
-            return [x0, y0, x1, y1], mask
+            if xs.size:
+                ix0, ix1 = wx0 + int(xs.min()), wx0 + int(xs.max())
+                iy0, iy1 = wy0 + ty0, wy0 + ty1
+            else:
+                ix0, iy0, ix1, iy1 = x0, y0, x1, y1
+            pad = 3
+            mask[max(0, iy0 - pad):min(H, iy1 + pad),
+                 max(0, ix0 - pad):min(W, ix1 + pad)] = 255
+            return [ix0, iy0, ix1 + 1, iy1 + 1], mask
 
         bw, bh = x1 - x0, y1 - y0
         px = int(bw * 0.20) + 4
@@ -243,7 +271,7 @@ class WordReplacer:
                 log.warning("sample failed for %r: %s", find, e)
 
             family = font_override or sample.get("best_family", "")
-            color = sample.get("color", "#000000")
+            color = "#000000"   # always render replacement text in black
             bold = sample.get("bold", False) if bold_override is None else bold_override
             italic = sample.get("italic", False)
 
