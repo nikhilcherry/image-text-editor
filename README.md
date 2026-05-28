@@ -230,6 +230,37 @@ python advanced_replace.py "X" --dry-run
 - `~/Desktop/text_replacement_log.json` — per-file success/failure + per-region
   detected font, size, color, and replacement status
 
+### C) Find & replace a specific word — no manual masking (`replace_word.py`)
+
+The simplest workflow: you say **what word to find** and **what to replace it
+with**, and the tool locates that exact word for you (via **Gemini** vision OCR,
+which returns per-word boxes), snaps the box to the real letter pixels, erases
+just that text, rebuilds the background, and re-types the new word in place.
+
+```bash
+# Interactive — it asks you what to replace and with what:
+python replace_word.py ~/Desktop/poster.png
+#   Find word:    tre
+#   Replace with: tree
+
+# One-shot, or several at once:
+python replace_word.py ~/Desktop/tre.png -f tre -r tree
+python replace_word.py flyer.png -f 2024 -r 2025 -f cat -r dog
+
+# Pick the inpaint model / force a font:
+python replace_word.py img.png -f cat -r dog \
+    --model sd-v1-5-inpainting.ckpt --font "Liberation Sans"
+```
+
+Requires `GEMINI_API_KEY` in `.env` (free key: https://aistudio.google.com/apikey).
+
+**Accuracy note:** Gemini locates words very well on **clear or stylised text**
+(posters, art, single labels). On **dense, multi-field documents** (e.g. ID
+cards) its boxes can drift vertically by a line, so the wrong line may be
+picked. For pixel-accurate document OCR, install Tesseract
+(`sudo apt install tesseract-ocr`) — it gives exact word boxes for printed text;
+Gemini remains the better choice for artistic/stylised text.
+
 ### Tips
 
 **Single-region typo fixes.** To correct one known piece of text (like the
