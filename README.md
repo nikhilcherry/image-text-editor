@@ -25,13 +25,20 @@ position — so the fix is invisible:
 | ------ | ----- |
 | ![before](examples/before.png) | ![after](examples/after.png) |
 
-The text region was **auto-detected** (solid-ink projection detector, robust to
-busy watercolor backgrounds), then re-typed in a matching light serif. Produced
-with:
+The text region was **located automatically by AI** (the solid-ink projection
+detector, robust to busy watercolor backgrounds — no manual boxing), then
+re-typed in a matching light serif. Produced with:
 
 ```bash
 python app/fix_one.py before.png "name : image" --font "Liberation Serif"
 ```
+
+> **Note on fonts:** the original image here was itself **AI-generated**, so the
+> text isn't set in any real, installed font — it only *looks* like a serif.
+> Because that exact typeface doesn't exist as a file on disk, the tool can't
+> reproduce it perfectly; it estimates the closest match (here a light serif,
+> `Liberation Serif`). For pixel-perfect matching you need the actual font
+> installed, or override it with `--font`.
 
 ---
 
