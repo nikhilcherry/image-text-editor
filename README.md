@@ -109,11 +109,12 @@ iopaint start --model=mat --port=8080        # leave running in its own terminal
 # 4. (optional) copy .env.example -> .env and add GEMINI_API_KEY
 ```
 
-**Windows note:** use `py -m venv venv && venv\Scripts\activate`, then
-`pip install -r requirements.txt`. Run the Python tools with `python` (not
-`./run.sh`, which is a bash script). Example:
-`python replace_word.py image.png -f cat -r dog`. Tesseract must be installed
-and on PATH, and IOPaint must be running (`iopaint start --model=mat`).
+**Windows:** see the full step-by-step **[INSTALL_WINDOWS.md](INSTALL_WINDOWS.md)**
+(covers CPU vs NVIDIA-GPU PyTorch, Tesseract PATH setup, and running the tools).
+In short: `py -m venv venv && venv\Scripts\activate`, then
+`pip install -r requirements.txt`; run tools with `python replace_word.py ...`
+(the `.sh` scripts are Linux-only); Tesseract must be on PATH and IOPaint
+running (`iopaint start --model=mat`).
 
 ### a) System packages
 Python 3.10+, git, and the OpenCV runtime libraries + fonts:
