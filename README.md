@@ -15,6 +15,21 @@ Runs on CPU too, just slower.
 
 ---
 
+## Example — fixing a typo in artwork
+
+Original text had a typo (**"imge"**). The tool erased it, rebuilt the
+watercolor behind it, and re-typed **"image"** in a matching serif at the same
+position — so the fix is invisible:
+
+| Before | After |
+| ------ | ----- |
+| ![before](examples/before.png) | ![after](examples/after.png) |
+
+This one used the targeted helper (`app/fix_one.py`) because the auto-detector
+over-segments very textured art — see [Tips](#tips) below.
+
+---
+
 ## How it works
 
 ```
@@ -151,6 +166,30 @@ python advanced_replace.py "X" --dry-run
 - `~/Desktop/yourfile_edited.png` — processed image (original kept untouched)
 - `~/Desktop/text_replacement_log.json` — per-file success/failure + per-region
   detected font, size, color, and replacement status
+
+### Tips
+
+**When the auto-detector grabs too much.** On very textured artwork
+(watercolor, gradients, busy photos) the region detector can over-segment and
+select most of the image. For those, use the targeted helper that takes an
+**explicit** text region, so only that band is touched:
+
+```bash
+source venv_app/bin/activate
+
+# Auto-find the solid dark-text band, fix the typo, keep everything else:
+python app/fix_one.py ~/Desktop/poster.png "name : image"
+
+# Or give the exact box + force a font when the typeface is misread:
+python app/fix_one.py ~/Desktop/poster.png "name : image" \
+    --bbox 55,534,1215,758 --font "Liberation Serif"
+```
+
+The `examples/` before→after above was produced with exactly this command.
+
+**Font matching.** Auto-detection sometimes misreads serif vs. sans or
+bold/regular. Override it with `--font "..."` / `--bold` (CLI) or the Step-4
+controls (UI). Install more font packages for better matches.
 
 ---
 
