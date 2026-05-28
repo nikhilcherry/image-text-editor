@@ -119,7 +119,7 @@ class IOPaintClient:
             "sd_guidance_scale": sd_guidance,
             "sd_seed":          sd_seed,
             "sd_strength":      sd_strength,
-            "sd_sampler":       "uni_pc",
+            "sd_sampler":       "DPM++ 2M",
             "sd_mask_blur":     4,
             "sd_match_histograms": False,
         }

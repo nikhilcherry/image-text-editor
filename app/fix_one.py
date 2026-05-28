@@ -20,7 +20,7 @@ from blender import NaturalBlender
 
 
 def run(src_path, out_path, text_bbox, mask_bbox, new_text, model="mat",
-        font_override=None, bold_override=None):
+        font_override=None, bold_override=None, prompt=None):
     src_path, out_path = Path(src_path), Path(out_path)
     work = Path("/tmp/fix_one"); work.mkdir(parents=True, exist_ok=True)
 
@@ -38,8 +38,8 @@ def run(src_path, out_path, text_bbox, mask_bbox, new_text, model="mat",
     inpainted = work / "inpainted.png"
     IOPaintClient("http://127.0.0.1:8080").inpaint(
         image_path=src, mask_path=mask, output_path=inpainted, model=model,
-        prompt="seamless watercolor background, soft pastel texture, no text",
-        negative_prompt="text, letters, words, watermark",
+        prompt=prompt or "seamless background, original texture, no text",
+        negative_prompt="text, letters, words, numbers, watermark, signature",
     )
 
     # 3. Sample original font from the PRE-inpainted text region
@@ -105,18 +105,23 @@ if __name__ == "__main__":
     ap.add_argument("--bbox", help="text bbox 'x0,y0,x1,y1' (default: auto-detect dark band)")
     ap.add_argument("--font", help="force a font family, e.g. 'Liberation Serif'")
     ap.add_argument("--bold", action="store_true", help="force bold")
-    ap.add_argument("--model", default="mat", help="inpaint model (mat/lama/zits); default mat")
+    ap.add_argument("--model", default="mat", help="inpaint model (mat/lama/zits/<sd ckpt>); default mat")
+    ap.add_argument("--prompt", help="inpaint prompt (mainly for SD models)")
+    ap.add_argument("--mask-bbox", help="explicit inpaint mask box 'x0,y0,x1,y1' "
+                                        "(default: text bbox + 14px pad)")
     a = ap.parse_args()
 
     src = Path(a.src)
     out = Path(a.out) if a.out else src.with_name(src.stem + "_edited.png")
+    img = Image.open(src); W, H = img.size
     if a.bbox:
         tb = [int(v) for v in a.bbox.split(",")]
-        img = Image.open(src); W, H = img.size
         mb = [max(0, tb[0] - 14), max(0, tb[1] - 14), min(W, tb[2] + 14), min(H, tb[3] + 14)]
     else:
         tb, mb, ocr = _auto_bbox(src)
         print(f"auto-detected text bbox: {tb}  (OCR: {ocr!r})")
+    if a.mask_bbox:
+        mb = [int(v) for v in a.mask_bbox.split(",")]
 
-    run(src, out, tb, mb, a.new_text, model=a.model,
+    run(src, out, tb, mb, a.new_text, model=a.model, prompt=a.prompt,
         font_override=a.font, bold_override=(True if a.bold else None))

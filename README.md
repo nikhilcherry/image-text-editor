@@ -40,6 +40,34 @@ python app/fix_one.py before.png "name : image" --font "Liberation Serif"
 > `Liberation Serif`). For pixel-perfect matching you need the actual font
 > installed, or override it with `--font`.
 
+### Example 2 — Stable Diffusion inpainting (remove only the text)
+
+A second fix (**"tre" → "tree"**) using the **SD 1.5 inpainting** model instead
+of MAT. SD *regenerates* plausible background inside the mask, so the painted
+sunset is rebuilt where the text was. Crucially, only the **text** is masked —
+the tree, the sun, and the rest of the painting are left completely untouched
+(nothing else is removed).
+
+| Before | After |
+| ------ | ----- |
+| ![before](examples/sd_before.png) | ![after](examples/sd_after.png) |
+
+```bash
+# Start IOPaint with the SD inpainting model (see SD setup below), then:
+python app/fix_one.py tre.png "tree" \
+    --bbox 47,306,100,326 --mask-bbox 40,300,95,332 \
+    --model "sd-v1-5-inpainting.ckpt" \
+    --prompt "orange and teal painted sunset sky, smooth brush texture, no text" \
+    --font "Liberation Sans" --bold
+```
+
+- `--mask-bbox` covers **only** the old text (kept clear of the tree), so SD
+  rebuilds just that patch — nothing else changes.
+- The negative prompt (`text, letters, words…`, built in) tells SD *not* to
+  paint any text back in.
+- This source is AI-generated too, so the same font caveat applies — the new
+  word uses a close match (`Liberation Sans` bold).
+
 ---
 
 ## How it works
@@ -127,13 +155,36 @@ Then open **http://localhost:5000**.
 Pick the IOPaint model at launch:
 
 ```bash
-IOPAINT_MODEL=mat           ./run.sh   # default — sharper on textured backgrounds
-IOPAINT_MODEL=lama          ./run.sh   # faster, but blurrier on detail
-IOPAINT_MODEL=zits          ./run.sh   # thin strokes / fine details
-IOPAINT_MODEL=sd-inpainting ./run.sh   # full SD regeneration (needs the 4 GB ckpt)
+IOPAINT_MODEL=mat  ./run.sh   # default — sharper on textured backgrounds
+IOPAINT_MODEL=lama ./run.sh   # faster, but blurrier on detail
+IOPAINT_MODEL=zits ./run.sh   # thin strokes / fine details
 ```
 
 Stop everything: `./stop.sh`
+
+### Using the SD 1.5 inpainting model (Example 2)
+
+For *generative* background reconstruction (regenerates texture instead of
+extending neighbours), use the local SD 1.5 inpainting checkpoint. IOPaint
+discovers single-file checkpoints under
+`models/iopaint_cache/stable_diffusion/`, so point it there once:
+
+```bash
+# 1. Get the checkpoint (≈4 GB) — downloads to models/checkpoints/
+./setup/download_models.sh
+
+# 2. Make IOPaint see it as a single-file SD model
+mkdir -p models/iopaint_cache/stable_diffusion
+ln -sf "$PWD/models/checkpoints/sd-v1-5-inpainting.ckpt" \
+       models/iopaint_cache/stable_diffusion/
+
+# 3. Start IOPaint on that model
+IOPAINT_MODEL=sd-v1-5-inpainting.ckpt ./run.sh
+```
+
+SD is **slower** than MAT/LaMa (it denoises ~40 steps per region) but rebuilds
+detailed/painted backgrounds best. It needs a GPU with enough VRAM; on CPU it's
+very slow.
 
 ---
 
