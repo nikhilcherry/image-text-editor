@@ -32,7 +32,8 @@ FONT_DIRS = [
 class TextOverlay:
     def __init__(self):
         self._font_cache: dict = {}
-        self._font_map: Optional[dict] = None  # lazy-loaded
+        self._font_map: Optional[dict] = None    # lazy-loaded (one per family)
+        self._font_faces: Optional[list] = None  # lazy-loaded (all weights/styles)
 
     # ── Public API ────────────────────────────────────────────
     def add_text(
@@ -175,23 +176,41 @@ class TextOverlay:
     def _find_font(
         self, family: str, bold: bool, italic: bool, size: int
     ) -> ImageFont.FreeTypeFont:
-        font_map = self._get_font_map()
-
-        # Try exact match
+        # Match against ALL faces (family + weight + slant), so we can pick the
+        # correct Regular / Bold / Italic file instead of whichever face merely
+        # shares the family name. fontconfig weight: regular≈80, bold≈200;
+        # slant: roman=0, italic/oblique>0.
         candidates = []
         if family:
             family_lower = family.lower()
-            for name, path in font_map.items():
-                if family_lower in name.lower():
-                    score = 0
-                    if bold   and ("bold"   in name.lower()): score += 2
-                    if italic and ("italic" in name.lower() or "oblique" in name.lower()): score += 2
-                    candidates.append((score, path))
+            for fam, weight, slant, path in self._get_font_faces():
+                if family_lower not in fam:
+                    continue
+                is_bold   = weight >= 180
+                is_italic = slant  >= 100
+                is_light  = weight <= 50
+                score = 0.0
+                # exact family name match beats substring match
+                if fam == family_lower:
+                    score += 1
+                # Weight: reward requested weight, penalise the wrong one.
+                if bold:
+                    score += 3 if is_bold else -2
+                else:
+                    score += -3 if is_bold else 1
+                    if is_light:
+                        score -= 1
+                # Slant: strongly penalise unwanted italic.
+                if italic:
+                    score += 3 if is_italic else -2
+                else:
+                    score += -4 if is_italic else 1
+                candidates.append((score, str(path)))
             candidates.sort(key=lambda t: -t[0])
 
         if candidates:
             try:
-                return ImageFont.truetype(str(candidates[0][1]), size)
+                return ImageFont.truetype(candidates[0][1], size)
             except Exception:
                 pass
 
@@ -238,6 +257,50 @@ class TextOverlay:
 
         self._font_map = font_map
         return font_map
+
+    def _get_font_faces(self) -> list:
+        """
+        Return [(family_lower, weight, slant, Path), …] for every installed
+        face. Unlike _get_font_map (one entry per family), this keeps each
+        weight/style as a separate face so _find_font can pick Regular vs Bold
+        vs Italic correctly.
+        """
+        if getattr(self, "_font_faces", None) is not None:
+            return self._font_faces
+
+        faces = []
+        try:
+            out = subprocess.check_output(
+                ["fc-list", "--format=%{family[0]}\t%{weight}\t%{slant}\t%{file}\n"],
+                stderr=subprocess.DEVNULL, timeout=5
+            ).decode(errors="ignore")
+            for line in out.strip().splitlines():
+                parts = line.split("\t")
+                if len(parts) != 4:
+                    continue
+                fam, weight, slant, path = parts
+                try:
+                    w = int(weight) if weight.strip() else 80
+                except ValueError:
+                    w = 80
+                try:
+                    s = int(slant) if slant.strip() else 0
+                except ValueError:
+                    s = 0
+                faces.append((fam.strip().lower(), w, s, Path(path.strip())))
+        except Exception:
+            # Fallback: derive weight/slant from the filename of each face.
+            for d in FONT_DIRS:
+                if not d.exists():
+                    continue
+                for p in d.rglob("*.[ot]tf"):
+                    nl = p.stem.lower()
+                    w = 200 if any(x in nl for x in ("bold", "black", "heavy")) else 80
+                    s = 100 if ("italic" in nl or "oblique" in nl) else 0
+                    faces.append((nl, w, s, p))
+
+        self._font_faces = faces
+        return faces
 
     # ── Color parsing ─────────────────────────────────────────
     @staticmethod

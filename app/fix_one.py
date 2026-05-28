@@ -74,23 +74,26 @@ def run(src_path, out_path, text_bbox, mask_bbox, new_text, model="lama",
     return sample
 
 
-def _auto_bbox(src_path, dark=45, pad=14):
-    """Find a single solid-dark text band by row-density (for art where the
-    automatic detector over-segments). Returns (text_bbox, mask_bbox)."""
-    img = np.array(Image.open(src_path).convert("RGB"))
-    H, W = img.shape[:2]
-    d = (img[:, :, 0] < dark) & (img[:, :, 1] < dark) & (img[:, :, 2] < dark)
-    rows = d.sum(axis=1)
-    band = np.where(rows > W * 0.05)[0]      # rows that are >5% solid-dark
-    if band.size == 0:
-        raise SystemExit("No solid-text band found — pass --bbox manually.")
-    y0b, y1b = band.min(), band.max()
-    sub = np.zeros_like(d); sub[y0b:y1b + 1, :] = d[y0b:y1b + 1, :]
-    ys, xs = np.where(sub)
-    x0, y0, x1, y1 = xs.min(), ys.min(), xs.max(), ys.max()
+def _auto_bbox(src_path, pad=14):
+    """Auto-detect the (largest) text region via AutoTextDetector and also
+    return the OCR'd original string. Returns (text_bbox, mask_bbox, ocr)."""
+    import tempfile
+    from auto_detector import AutoTextDetector
+    img = Image.open(src_path); W, H = img.size
+    det = AutoTextDetector().detect(
+        image_path=Path(src_path),
+        mask_out=Path(tempfile.mktemp(suffix=".png")),
+    )
+    boxes = det.get("boxes") or []
+    if not boxes:
+        raise SystemExit("Auto-detector found no text — pass --bbox manually.")
+    # pick the largest-area region
+    i = max(range(len(boxes)), key=lambda k: (boxes[k][2] - boxes[k][0]) * (boxes[k][3] - boxes[k][1]))
+    x0, y0, x1, y1 = boxes[i]
+    ocr = (det.get("ocr") or [""] * len(boxes))[i]
     tb = [int(x0), int(y0), int(x1), int(y1)]
     mb = [max(0, x0 - pad), max(0, y0 - pad), min(W, x1 + pad), min(H, y1 + pad)]
-    return tb, [int(v) for v in mb]
+    return tb, [int(v) for v in mb], ocr
 
 
 if __name__ == "__main__":
@@ -112,8 +115,8 @@ if __name__ == "__main__":
         img = Image.open(src); W, H = img.size
         mb = [max(0, tb[0] - 14), max(0, tb[1] - 14), min(W, tb[2] + 14), min(H, tb[3] + 14)]
     else:
-        tb, mb = _auto_bbox(src)
-        print(f"auto text bbox: {tb}")
+        tb, mb, ocr = _auto_bbox(src)
+        print(f"auto-detected text bbox: {tb}  (OCR: {ocr!r})")
 
     run(src, out, tb, mb, a.new_text, model=a.model,
         font_override=a.font, bold_override=(True if a.bold else None))

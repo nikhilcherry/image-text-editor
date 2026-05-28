@@ -25,8 +25,13 @@ position — so the fix is invisible:
 | ------ | ----- |
 | ![before](examples/before.png) | ![after](examples/after.png) |
 
-This one used the targeted helper (`app/fix_one.py`) because the auto-detector
-over-segments very textured art — see [Tips](#tips) below.
+The text region was **auto-detected** (solid-ink projection detector, robust to
+busy watercolor backgrounds), then re-typed in a matching light serif. Produced
+with:
+
+```bash
+python app/fix_one.py before.png "name : image" --font "Liberation Serif"
+```
 
 ---
 
@@ -169,27 +174,26 @@ python advanced_replace.py "X" --dry-run
 
 ### Tips
 
-**When the auto-detector grabs too much.** On very textured artwork
-(watercolor, gradients, busy photos) the region detector can over-segment and
-select most of the image. For those, use the targeted helper that takes an
-**explicit** text region, so only that band is touched:
+**Single-region typo fixes.** To correct one known piece of text (like the
+example above) use the targeted helper. It auto-detects the text region, or you
+can pass an explicit box:
 
 ```bash
 source venv_app/bin/activate
 
-# Auto-find the solid dark-text band, fix the typo, keep everything else:
+# Auto-detect the text region, fix it, keep everything else untouched:
 python app/fix_one.py ~/Desktop/poster.png "name : image"
 
-# Or give the exact box + force a font when the typeface is misread:
+# Give the exact box + force a font if the typeface is misread:
 python app/fix_one.py ~/Desktop/poster.png "name : image" \
     --bbox 55,534,1215,758 --font "Liberation Serif"
 ```
 
-The `examples/` before→after above was produced with exactly this command.
-
-**Font matching.** Auto-detection sometimes misreads serif vs. sans or
-bold/regular. Override it with `--font "..."` / `--bold` (CLI) or the Step-4
-controls (UI). Install more font packages for better matches.
+**Font matching.** The font *sampler* (serif-vs-sans, family) can still misread
+ornate text — override the typeface with `--font "..."` / `--bold` (CLI) or the
+Step-4 controls (UI). Weight (Regular/Bold/Italic) is now selected from the
+correct font face, so non-bold text renders light as expected. Install more
+font packages for better family matches.
 
 ---
 

@@ -63,13 +63,19 @@ class AutoTextDetector:
         H, W    = img.shape[:2]
 
         # ── Stage 1: classical CV ──────────────────────────────────────────
-        mser_boxes  = self._mser_detect(img, padding, min_area)
+        # Solid-ink projection detector first — robust on textured art/photos
+        # where MSER/gradient drown in false regions. Falls back to MSER, then
+        # morphological gradient, only if it finds nothing.
+        solid_boxes = self._solid_text_detect(img, padding)
+        mser_boxes  = [] if solid_boxes else self._mser_detect(img, padding, min_area)
         morph_boxes = []
-        if not mser_boxes:
+        if not solid_boxes and not mser_boxes:
             morph_boxes = self._gradient_detect(img, padding)
 
-        cv_boxes = mser_boxes or morph_boxes
-        method   = "mser" if mser_boxes else ("gradient" if morph_boxes else "")
+        cv_boxes = solid_boxes or mser_boxes or morph_boxes
+        method   = ("solid" if solid_boxes else
+                    "mser"  if mser_boxes  else
+                    "gradient" if morph_boxes else "")
 
         # ── Stage 2: Groq vision (primary OCR + verification) ─────────────
         groq_boxes: List[Tuple[int,int,int,int]] = []
@@ -79,9 +85,22 @@ class AutoTextDetector:
             if groq_boxes:
                 method += ("+groq" if method else "groq")
 
-        # ── Merge CV + Groq boxes ──────────────────────────────────────────
-        all_boxes = list(cv_boxes) + list(groq_boxes)
-        merged    = self._merge_boxes(all_boxes, W, H, gap=10)
+        # ── Choose geometry source ─────────────────────────────────────────
+        # Drop boxes that cover most of the image first, so a single bad
+        # whole-image box can't swallow good ones during the union.
+        cv_boxes = self._sanity_filter(cv_boxes, W, H)
+
+        if cv_boxes:
+            # CV gave precise pixel boxes — trust them. Groq's coordinates are
+            # often imprecise, so use Groq ONLY for OCR text (mapped below),
+            # not for geometry.
+            merged = self._merge_boxes(cv_boxes, W, H, gap=10)
+        else:
+            # No CV detection — fall back to Groq's boxes as the geometry.
+            merged = self._merge_boxes(
+                self._sanity_filter(groq_boxes, W, H), W, H, gap=10
+            )
+        merged = self._sanity_filter(merged, W, H)
 
         # Align OCR texts to merged boxes (best-effort: Groq texts may not
         # line up 1-to-1 after merging, so map by largest-overlap heuristic)
@@ -227,6 +246,115 @@ class AutoTextDetector:
             boxes.append((x0, y0, x1, y1))
 
         return self._merge_boxes(boxes, W, H, gap=12)
+
+    # ── Solid-ink projection detection ─────────────────────────────────────
+
+    def _solid_text_detect(
+        self, img: np.ndarray, padding: int
+    ) -> List[Tuple[int, int, int, int]]:
+        """
+        Robust detector for solid, high-contrast text (black/white/strong) on
+        busy or textured backgrounds — the case where MSER and gradient drown
+        in thousands of false regions (watercolor, gradients, photos).
+
+        Idea: real text is made of *solid extreme-value* strokes that form a
+        horizontal band. Decorative line-art (leaves, sketches) is thin and
+        mid-tone, so it mostly fails an absolute extreme-value test.
+
+          1. Build an "ink" mask for each polarity (near-black, near-white).
+          2. Locate text bands via the horizontal projection profile, using
+             hysteresis (high threshold to find a band, low to grow it).
+          3. Measure each band's true extent from the *raw* ink (so thin serifs
+             at the line edges aren't eroded away).
+        """
+        arr = img.astype(np.int32)
+        H, W = arr.shape[:2]
+        ch_min = arr.min(axis=2)
+        ch_max = arr.max(axis=2)
+
+        results: List[Tuple[int, int, int, int]] = []
+
+        for polarity in ("dark", "light"):
+            raw = (ch_max < 70) if polarity == "dark" else (ch_min > 200)
+            if raw.sum() < W * 0.5:          # almost no ink of this polarity
+                continue
+
+            # Opened mask de-speckles the projection profile (band *location*).
+            opened = cv2.morphologyEx(
+                (raw.astype(np.uint8)) * 255,
+                cv2.MORPH_OPEN, np.ones((3, 3), np.uint8),
+            ) > 0
+            row = opened.sum(axis=1).astype(np.float32)
+            if row.max() < W * 0.02:
+                continue
+
+            hi = row.max() * 0.25
+            lo = row.max() * 0.10
+            y = 0
+            while y < H:
+                if row[y] > hi:
+                    y0 = y1 = y
+                    while y0 > 0 and row[y0 - 1] > lo:
+                        y0 -= 1
+                    while y1 < H - 1 and row[y1 + 1] > lo:
+                        y1 += 1
+
+                    # Measure extent in an expanded window from RAW ink, so
+                    # thin serifs / ascenders / descenders are preserved.
+                    ph  = (y1 - y0)
+                    wy0 = max(0, y0 - ph)
+                    wy1 = min(H, y1 + ph)
+                    win = raw[wy0:wy1, :]
+                    rr  = win.sum(axis=1)
+                    cc  = win.sum(axis=0)
+                    ys  = np.where(rr > max(6, W * 0.012))[0]   # rows: solid only
+                    xs  = np.where(cc >= 3)[0]                  # cols: inclusive
+
+                    if ys.size and xs.size:
+                        fx0, fx1 = int(xs.min()), int(xs.max())
+                        fy0 = wy0 + int(ys.min())
+                        fy1 = wy0 + int(ys.max())
+                        bw, bh = fx1 - fx0, fy1 - fy0
+                        if (bw > bh and bw > W * 0.03 and
+                                10 < bh < H * 0.45 and bw * bh < 0.55 * W * H):
+                            # small safety pad (esp. to catch descenders)
+                            px = padding
+                            py = max(padding, bh // 12)
+                            results.append((
+                                max(0, fx0 - px), max(0, fy0 - py),
+                                min(W, fx1 + 1 + px), min(H, fy1 + 1 + py),
+                            ))
+                    y = y1 + 1
+                else:
+                    y += 1
+
+        # Merge overlapping dark/light detections of the same line.
+        merged = self._merge_boxes(results, W, H, gap=6)
+        return self._sanity_filter(merged, W, H)
+
+    # ── Size sanity filter ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _sanity_filter(
+        boxes: List[Tuple[int, int, int, int]], W: int, H: int
+    ) -> List[Tuple[int, int, int, int]]:
+        """
+        Reject boxes that are clearly not a single text line/region:
+          • cover > 60% of the image area, or
+          • span nearly the full width AND are very tall (whole-image grabs).
+        """
+        out = []
+        for (x0, y0, x1, y1) in boxes:
+            bw, bh = x1 - x0, y1 - y0
+            if bw <= 0 or bh <= 0:
+                continue
+            area_frac = (bw * bh) / float(W * H)
+            if area_frac > 0.60:
+                continue
+            if bw > W * 0.92 and bh > H * 0.55:
+                continue
+            out.append((x0, y0, x1, y1))
+        return out
 
     # ── Groq vision detection + OCR ────────────────────────────────────────
 
@@ -408,5 +536,22 @@ class AutoTextDetector:
 
             if best_iou > 0.15 and best_text:
                 result[mi] = best_text
+
+        # ── Fallback: Groq's pixel coords are often imprecise, so IoU can be 0
+        # even when the OCR text is correct. For boxes still without text, map
+        # any *unused* Groq texts by reading order (top→bottom, left→right).
+        used_texts = set(result.values())
+        unmapped_boxes = [i for i in range(len(merged)) if i not in result]
+        leftover = [
+            (sb, st) for sb, st in zip(src_boxes, src_texts)
+            if st and st not in used_texts
+        ]
+        if unmapped_boxes and leftover:
+            def _order(b):  # (cy, cx)
+                return ((b[1] + b[3]) / 2, (b[0] + b[2]) / 2)
+            unmapped_boxes.sort(key=lambda i: _order(merged[i]))
+            leftover.sort(key=lambda t: _order(t[0]))
+            for bi, (_, txt) in zip(unmapped_boxes, leftover):
+                result[bi] = txt
 
         return result
