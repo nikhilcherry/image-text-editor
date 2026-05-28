@@ -95,8 +95,13 @@ Python 3.10+, git, and the OpenCV runtime libraries + fonts:
 ```bash
 sudo apt install python3 python3-venv python3-pip git \
                  libgl1 libglib2.0-0 \
-                 fonts-liberation fonts-dejavu fonts-noto
+                 fonts-liberation fonts-dejavu fonts-noto \
+                 tesseract-ocr
 ```
+
+`tesseract-ocr` powers pixel-accurate word detection for the
+`replace_word.py` "find & replace a word" tool (Gemini is the fallback for
+stylised text).
 
 The `fonts-*` packages matter: font matching maps detected fonts (Arial,
 Helvetica, Times…) onto installed equivalents (Liberation Sans, DejaVu Serif…).
@@ -233,9 +238,14 @@ python advanced_replace.py "X" --dry-run
 ### C) Find & replace a specific word — no manual masking (`replace_word.py`)
 
 The simplest workflow: you say **what word to find** and **what to replace it
-with**, and the tool locates that exact word for you (via **Gemini** vision OCR,
-which returns per-word boxes), snaps the box to the real letter pixels, erases
-just that text, rebuilds the background, and re-types the new word in place.
+with**, and the tool locates that exact word for you, erases just that text,
+rebuilds the background, and re-types the new word in place.
+
+OCR is **hybrid**:
+- **Tesseract** (primary) — pixel-accurate word boxes for printed / document
+  text (IDs, forms, signs). Install: `sudo apt install tesseract-ocr`.
+- **Gemini** (fallback) — used only for words Tesseract can't read, e.g.
+  stylised / artistic text. Needs `GEMINI_API_KEY` in `.env`.
 
 ```bash
 # Interactive — it asks you what to replace and with what:
@@ -252,14 +262,17 @@ python replace_word.py img.png -f cat -r dog \
     --model sd-v1-5-inpainting.ckpt --font "Liberation Sans"
 ```
 
-Requires `GEMINI_API_KEY` in `.env` (free key: https://aistudio.google.com/apikey).
+**Which inpaint model?**
+- **MAT / LaMa** (default `mat`) — best for **documents**: they *erase* by
+  filling from surroundings, so text vanishes cleanly. Use these for IDs/forms.
+- **SD 1.5** (`--model sd-v1-5-inpainting.ckpt`) — best for **artistic /
+  painted backgrounds** (it regenerates texture). ⚠️ Avoid it on text-heavy
+  documents — being generative, it can hallucinate fake letters into the gap.
 
-**Accuracy note:** Gemini locates words very well on **clear or stylised text**
-(posters, art, single labels). On **dense, multi-field documents** (e.g. ID
-cards) its boxes can drift vertically by a line, so the wrong line may be
-picked. For pixel-accurate document OCR, install Tesseract
-(`sudo apt install tesseract-ocr`) — it gives exact word boxes for printed text;
-Gemini remains the better choice for artistic/stylised text.
+```text
+Tesseract found WILLIAM at the exact line → MAT erased it → "NIKHIL" re-typed,
+photo / holograms / layout untouched.   (gemini handles the stylised cases)
+```
 
 ### Tips
 

@@ -28,6 +28,7 @@ import numpy as np
 from PIL import Image
 
 from gemini_ocr import GeminiOCR
+from tesseract_ocr import TesseractOCR
 from inpaint import IOPaintClient
 from font_sampler import FontSampler
 from text_overlay import TextOverlay
@@ -42,7 +43,8 @@ def _norm(s: str) -> str:
 
 class WordReplacer:
     def __init__(self, iopaint_url: str = "http://127.0.0.1:8080"):
-        self.ocr = GeminiOCR()
+        self.tesseract = TesseractOCR()     # primary: pixel-accurate on docs
+        self.gemini = GeminiOCR()           # fallback: stylised / artistic text
         self.iopaint = IOPaintClient(iopaint_url)
         self.sampler = FontSampler()
         self.overlay = TextOverlay()
@@ -79,18 +81,34 @@ class WordReplacer:
 
     # ── bbox refinement → tight box + stroke mask ──────────────────────────
     @staticmethod
-    def _refine(img: np.ndarray, box: List[int]) -> Tuple[List[int], np.ndarray]:
+    def _refine(img: np.ndarray, box: List[int],
+                precise: bool = False) -> Tuple[List[int], np.ndarray]:
         """
-        Given an approximate (Gemini) box, find the real text ink inside it.
-        Returns (tight_bbox, full_image_mask) where mask is the dilated text
-        strokes only (uint8 0/255). VLM boxes are imprecise, so we snap to
-        pixels — this is what keeps us from erasing anything but the text.
+        Find the real text ink inside an OCR box and return
+        (tight_bbox, full_image_mask) — the mask is the dilated text strokes
+        only (uint8 0/255), so only the text gets inpainted.
+
+        `precise=True` (Tesseract): the box is already accurate, so we only
+        look *inside* it (tiny pad) and keep the box as the render target — no
+        wide window that could bleed into the line above/below.
+        `precise=False` (Gemini): boxes are imprecise, so we expand and snap to
+        ink to correct small offsets.
         """
         H, W = img.shape[:2]
         x0, y0, x1, y1 = box
+
+        if precise:
+            # Tesseract box is tight to the word → fill it as a rectangle for a
+            # clean, complete erase (small pad). It only covers the word, so
+            # neighbouring lines stay untouched.
+            pad = 3
+            mx0, my0 = max(0, x0 - pad), max(0, y0 - pad)
+            mx1, my1 = min(W, x1 + pad), min(H, y1 + pad)
+            mask = np.zeros((H, W), dtype=np.uint8)
+            mask[my0:my1, mx0:mx1] = 255
+            return [x0, y0, x1, y1], mask
+
         bw, bh = x1 - x0, y1 - y0
-        # Expand a little to catch ink the VLM box clipped, but keep the
-        # vertical window modest so we don't bleed into an adjacent text line.
         px = int(bw * 0.20) + 4
         py = min(int(bh * 0.6) + 4, max(6, bh))
         wx0, wy0 = max(0, x0 - px), max(0, y0 - py)
@@ -115,11 +133,14 @@ class WordReplacer:
             mask[y0:y1, x0:x1] = 255
             return [x0, y0, x1, y1], mask
 
-        tx0, ty0 = wx0 + int(xs.min()), wy0 + int(ys.min())
-        tx1, ty1 = wx0 + int(xs.max()), wy0 + int(ys.max())
-
         dil = cv2.dilate(ink8, np.ones((3, 3), np.uint8), iterations=2)
         mask[wy0:wy1, wx0:wx1] = dil
+
+        if precise:
+            # trust the OCR box for placement/size; mask still = real strokes
+            return [x0, y0, x1, y1], mask
+        tx0, ty0 = wx0 + int(xs.min()), wy0 + int(ys.min())
+        tx1, ty1 = wx0 + int(xs.max()), wy0 + int(ys.max())
         return [tx0, ty0, tx1 + 1, ty1 + 1], mask
 
     # ── main entry ─────────────────────────────────────────────────────────
@@ -145,27 +166,51 @@ class WordReplacer:
         src = work / "source.png"; src_img.save(src)
         img = np.array(src_img)
 
-        # 1. OCR
-        words = self.ocr.detect_words(image_path)
+        # 1. OCR — Tesseract first (pixel-accurate on printed/document text).
+        #    Gemini is only used as a fallback for words Tesseract can't read
+        #    (stylised / artistic text), so we don't even call it unless needed.
+        tess_words: List[Dict] = []
+        if self.tesseract.available():
+            try:
+                tess_words = self.tesseract.detect_words(image_path)
+            except Exception as e:
+                log.warning("Tesseract OCR failed: %s", e)
 
         # 2-3. match + refine each target
         jobs = []                       # (find, repl, tight_bbox)
         combined_mask = np.zeros((H, W), dtype=np.uint8)
         not_found = []
+        gem_words: Optional[List[Dict]] = None     # lazy-loaded
+        used_src = {}
         for find, repl in replacements.items():
-            boxes = self._match_targets(words, find)
+            boxes = self._match_targets(tess_words, find)
+            ocr_src = "tesseract"
+            if not boxes:
+                # Fall back to Gemini for this word (load OCR once).
+                if gem_words is None:
+                    gem_words = []
+                    if self.gemini.available():
+                        try:
+                            gem_words = self.gemini.detect_words(image_path)
+                        except Exception as e:
+                            log.warning("Gemini OCR fallback failed: %s", e)
+                boxes = self._match_targets(gem_words, find)
+                ocr_src = "gemini"
             if not boxes:
                 not_found.append(find)
                 continue
+            used_src[find] = ocr_src
             for b in boxes:
-                tight, m = self._refine(img, b)
+                tight, m = self._refine(img, b, precise=(ocr_src == "tesseract"))
                 combined_mask |= m
                 jobs.append((find, repl, tight))
 
         if not jobs:
+            detected = [w["text"] for w in tess_words] + \
+                       [w["text"] for w in (gem_words or [])]
             log.warning("No target words found: %s", list(replacements))
             return {"file": str(image_path), "status": "no_match",
-                    "not_found": not_found, "detected": [w["text"] for w in words]}
+                    "not_found": not_found, "detected": detected}
 
         mask_path = work / "mask.png"
         Image.fromarray(combined_mask).save(mask_path)
@@ -217,7 +262,8 @@ class WordReplacer:
             )
             base = merged
             results.append({"find": find, "replace": repl, "bbox": bbox,
-                            "font": family, "color": color, "bold": bool(bold)})
+                            "font": family, "color": color, "bold": bool(bold),
+                            "ocr": used_src.get(find, "?")})
 
         # 6. save + log
         Image.open(base).convert("RGB").save(out_path)
