@@ -28,6 +28,38 @@ class TesseractOCR:
     def available(self) -> bool:
         return bool(self.bin)
 
+    def orientation(self, image_path: Path) -> int:
+        """
+        Coarse page orientation via Tesseract OSD. Returns the degrees the
+        image must be rotated *clockwise* to make text upright: 0/90/180/270.
+        Returns 0 if OSD is unavailable or low-confidence.
+        """
+        if not self.bin:
+            return 0
+        try:
+            out = subprocess.check_output(
+                [self.bin, str(image_path), "stdout", "--psm", "0"],
+                stderr=subprocess.DEVNULL, timeout=30,
+            ).decode("utf-8", "ignore")
+        except Exception:
+            return 0
+        rotate, conf = 0, 0.0
+        for line in out.splitlines():
+            if line.startswith("Rotate:"):
+                try:
+                    rotate = int(line.split(":")[1].strip())
+                except ValueError:
+                    pass
+            elif line.startswith("Orientation confidence:"):
+                try:
+                    conf = float(line.split(":")[1].strip())
+                except ValueError:
+                    pass
+        # Require some confidence before trusting a non-zero rotation.
+        if rotate in (90, 180, 270) and conf >= 1.0:
+            return rotate
+        return 0
+
     def detect_words(self, image_path: Path) -> List[Dict]:
         if not self.bin:
             raise RuntimeError("tesseract binary not found on PATH")

@@ -274,6 +274,11 @@ OCR is **hybrid**:
 - **Gemini** (fallback) — used only for words Tesseract can't read, e.g.
   stylised / artistic text. Needs `GEMINI_API_KEY` in `.env`.
 
+**Rotation is handled automatically:** sideways / upside-down images (Tesseract
+OSD) and slight skew (projection-profile deskew) are straightened before
+processing, then the result is rotated back to the original orientation. Disable
+with `--no-rotate`.
+
 ```bash
 # Interactive — it asks you what to replace and with what:
 python replace_word.py ~/Desktop/poster.png

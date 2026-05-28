@@ -75,6 +75,8 @@ def main():
     ap.add_argument("--bold", action="store_true", help="force bold")
     ap.add_argument("--no-open", action="store_true",
                     help="don't auto-open the result when done")
+    ap.add_argument("--no-rotate", action="store_true",
+                    help="don't auto-straighten rotated/skewed images")
     args = ap.parse_args()
 
     img = Path(args.image).expanduser()
@@ -104,6 +106,7 @@ def main():
         prompt=args.prompt,
         font_override=args.font,
         bold_override=(True if args.bold else None),
+        auto_rotate=(not args.no_rotate),
     )
 
     print("\n" + "=" * 50)

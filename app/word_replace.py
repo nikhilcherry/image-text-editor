@@ -171,6 +171,59 @@ class WordReplacer:
         tx1, ty1 = wx0 + int(xs.max()), wy0 + int(ys.max())
         return [tx0, ty0, tx1 + 1, ty1 + 1], mask
 
+    # ── orientation / skew correction ──────────────────────────────────────
+    @staticmethod
+    def _estimate_skew(pil_img, limit: float = 10.0, step: float = 0.5) -> float:
+        """Fine skew angle (deg, CCW-positive to straighten) via projection-
+        profile variance: the rotation that makes text rows most distinct."""
+        g = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2GRAY)
+        h, w = g.shape
+        s = 800.0 / max(h, w)
+        if s < 1.0:
+            g = cv2.resize(g, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
+        g = cv2.GaussianBlur(g, (3, 3), 0)
+        bw = cv2.adaptiveThreshold(g, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+                                   cv2.THRESH_BINARY_INV, 31, 15)
+        H, W = bw.shape
+        best_a, best = 0.0, -1.0
+        a = -limit
+        while a <= limit + 1e-9:
+            M = cv2.getRotationMatrix2D((W / 2, H / 2), a, 1.0)
+            rot = cv2.warpAffine(bw, M, (W, H), flags=cv2.INTER_NEAREST)
+            proj = rot.sum(axis=1, dtype=np.float64)
+            d = np.diff(proj)
+            score = float((d * d).sum())
+            if score > best:
+                best, best_a = score, a
+            a += step
+        return best_a
+
+    def _correct_orientation(self, pil_img, src_path):
+        """Straighten a sideways/upside-down or slightly skewed image.
+        Returns (upright_img, restore_fn, osd_deg, skew_deg, changed)."""
+        osd = self.tesseract.orientation(src_path) if self.tesseract.available() else 0
+        img = pil_img.rotate(-osd, expand=True) if osd else pil_img   # rotate(-OSD)=upright
+        fine = self._estimate_skew(img)
+        if abs(fine) >= 0.5:
+            img = img.rotate(fine, expand=True, resample=Image.BICUBIC,
+                             fillcolor=(255, 255, 255))
+        else:
+            fine = 0.0
+        orig_w, orig_h = pil_img.size
+
+        def restore(result_pil):
+            out = result_pil
+            if fine:
+                out = out.rotate(-fine, expand=True, resample=Image.BICUBIC,
+                                 fillcolor=(255, 255, 255))
+            if osd:
+                out = out.rotate(osd, expand=True)
+            cw, ch = out.size                       # crop back to original framing
+            left, top = max(0, (cw - orig_w) // 2), max(0, (ch - orig_h) // 2)
+            return out.crop((left, top, left + orig_w, top + orig_h))
+
+        return img, restore, osd, fine, (bool(osd) or bool(fine))
+
     # ── main entry ─────────────────────────────────────────────────────────
     def replace(
         self,
@@ -182,6 +235,7 @@ class WordReplacer:
         font_override: str = "",
         bold_override: Optional[bool] = None,
         log_path: Optional[Path] = None,
+        auto_rotate: bool = True,
     ) -> dict:
         image_path = Path(image_path)
         out_path = Path(out_path) if out_path else \
@@ -189,7 +243,21 @@ class WordReplacer:
         work = Path("/tmp/word_replace") / uuid.uuid4().hex
         work.mkdir(parents=True, exist_ok=True)
 
-        src_img = Image.open(image_path).convert("RGB")
+        orig_img = Image.open(image_path).convert("RGB")
+
+        # Auto-straighten sideways / skewed images, then process upright and
+        # rotate the result back at the end.
+        restore = None
+        if auto_rotate:
+            raw = work / "raw.png"; orig_img.save(raw)
+            src_img, restore, osd, skew, rotated = self._correct_orientation(orig_img, raw)
+            if rotated:
+                log.info("Auto-rotate applied: OSD=%d°, skew=%.1f°", osd, skew)
+            else:
+                restore = None
+        else:
+            src_img = orig_img
+
         W, H = src_img.size
         src = work / "source.png"; src_img.save(src)
         img = np.array(src_img)
@@ -200,7 +268,7 @@ class WordReplacer:
         tess_words: List[Dict] = []
         if self.tesseract.available():
             try:
-                tess_words = self.tesseract.detect_words(image_path)
+                tess_words = self.tesseract.detect_words(src)
             except Exception as e:
                 log.warning("Tesseract OCR failed: %s", e)
 
@@ -219,7 +287,7 @@ class WordReplacer:
                     gem_words = []
                     if self.gemini.available():
                         try:
-                            gem_words = self.gemini.detect_words(image_path)
+                            gem_words = self.gemini.detect_words(src)
                         except Exception as e:
                             log.warning("Gemini OCR fallback failed: %s", e)
                 boxes = self._match_targets(gem_words, find)
@@ -294,7 +362,10 @@ class WordReplacer:
                             "ocr": used_src.get(find, "?")})
 
         # 6. save + log
-        Image.open(base).convert("RGB").save(out_path)
+        final_img = Image.open(base).convert("RGB")
+        if restore is not None:                      # rotate result back to input orientation
+            final_img = restore(final_img)
+        final_img.save(out_path)
         summary = {
             "file": str(image_path), "output": str(out_path),
             "status": "success", "replaced": len(results),
