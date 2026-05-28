@@ -73,6 +73,8 @@ def main():
                     help="background prompt (mainly for SD models)")
     ap.add_argument("--font", default="", help="force a font family")
     ap.add_argument("--bold", action="store_true", help="force bold")
+    ap.add_argument("--no-open", action="store_true",
+                    help="don't auto-open the result when done")
     args = ap.parse_args()
 
     img = Path(args.image).expanduser()
@@ -112,10 +114,30 @@ def main():
             print(f"    • {r['find']!r} → {r['replace']!r}  @ {r['bbox']}")
         if res["not_found"]:
             print(f"  Not found: {res['not_found']}")
+        if not args.no_open:
+            _open_file(res["output"])
     elif res.get("status") == "no_match":
         print("  ✗ None of the words were found.")
         print(f"  Detected words: {res.get('detected')}")
     print("=" * 50)
+
+
+def _open_file(path):
+    """Open the finished image in the system's default viewer."""
+    import platform
+    import subprocess
+    try:
+        if platform.system() == "Darwin":
+            subprocess.Popen(["open", str(path)])
+        elif platform.system() == "Windows":
+            import os
+            os.startfile(str(path))             # noqa: pylint
+        else:                                    # Linux / *nix
+            subprocess.Popen(["xdg-open", str(path)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"  ↗ Opened {path}")
+    except Exception as e:
+        print(f"  (could not auto-open: {e})")
 
 
 if __name__ == "__main__":
