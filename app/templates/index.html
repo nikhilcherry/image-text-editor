@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Text Editor</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header class="app-header">
+    <div class="header-left">
+      <span class="logo">🖼 Image Text Editor</span>
+      <span class="subtitle">Inpaint · Erase · Retype</span>
+    </div>
+    <div class="header-right">
+      <div id="statusBar" class="status-bar">
+        <span class="dot" id="dotIopaint"></span><span id="lblIopaint">IOPaint</span>
+        <span class="dot" id="dotComfy"></span><span id="lblComfy">ComfyUI</span>
+      </div>
+      <button class="btn btn-sm" onclick="checkHealth()">⟳ Status</button>
+    </div>
+  </header>
+
+  <!-- ── Step Navigator ─────────────────────────────────── -->
+  <nav class="step-nav">
+    <div class="step active" data-step="1" onclick="goStep(1)">
+      <span class="step-num">1</span><span class="step-lbl">Upload</span>
+    </div>
+    <div class="step-arrow">›</div>
+    <div class="step" data-step="2" onclick="goStep(2)">
+      <span class="step-num">2</span><span class="step-lbl">Mask</span>
+    </div>
+    <div class="step-arrow">›</div>
+    <div class="step" data-step="3" onclick="goStep(3)">
+      <span class="step-num">3</span><span class="step-lbl">Inpaint</span>
+    </div>
+    <div class="step-arrow">›</div>
+    <div class="step" data-step="4" onclick="goStep(4)">
+      <span class="step-num">4</span><span class="step-lbl">Add Text</span>
+    </div>
+    <div class="step-arrow">›</div>
+    <div class="step" data-step="5" onclick="goStep(5)">
+      <span class="step-num">5</span><span class="step-lbl">Save</span>
+    </div>
+    <div class="step-divider">|</div>
+    <div class="step batch-tab" data-step="batch" onclick="goStep('batch')">
+      <span class="step-num">⚡</span><span class="step-lbl">Batch</span>
+    </div>
+  </nav>
+
+  <!-- ── Main Layout ────────────────────────────────────── -->
+  <main class="app-body">
+
+    <!-- Canvas Area -->
+    <div class="canvas-wrapper" id="canvasWrapper">
+
+      <!-- Drop zone (Step 1) -->
+      <div id="dropZone" class="drop-zone">
+        <div class="drop-content">
+          <div class="drop-icon">⬆</div>
+          <p>Drop an image here</p>
+          <p class="drop-sub">or</p>
+          <label class="btn btn-primary" for="fileInput">Choose File</label>
+          <input type="file" id="fileInput" accept="image/*" style="display:none">
+          <p class="drop-hint">PNG · JPG · WEBP · BMP · TIFF  (max 50 MB)</p>
+        </div>
+      </div>
+
+      <!-- Canvas stack (Steps 2–5) -->
+      <div id="canvasStack" class="canvas-stack hidden">
+        <!-- Background: shows current working image -->
+        <canvas id="cvBase"></canvas>
+        <!-- Mask layer: user paints here (semi-transparent red) -->
+        <canvas id="cvMask" class="cv-overlay"></canvas>
+        <!-- Text preview ghost (Step 4) -->
+        <canvas id="cvText" class="cv-overlay hidden"></canvas>
+        <!-- Crosshair cursor for text placement -->
+        <div id="textCursor" class="text-cursor hidden">+</div>
+      </div>
+
+      <!-- Zoom controls -->
+      <div id="zoomControls" class="zoom-controls hidden">
+        <button onclick="zoom(-0.1)" title="Zoom out">−</button>
+        <span id="zoomLabel">100%</span>
+        <button onclick="zoom(+0.1)" title="Zoom in">+</button>
+        <button onclick="zoomFit()" title="Fit to window">⊡</button>
+      </div>
+    </div>
+
+    <!-- Side Panel -->
+    <aside class="side-panel">
+
+      <!-- ─── Step 1: Upload ────────────────────────────── -->
+      <section id="panel1" class="panel active">
+        <h2>Step 1 — Upload Image</h2>
+        <p class="hint">Upload an image that has text you want to remove and replace.</p>
+        <div class="field">
+          <label class="btn btn-primary full-width" for="fileInput2">📂 Open Image…</label>
+          <input type="file" id="fileInput2" accept="image/*" style="display:none">
+        </div>
+        <div id="imageInfo" class="info-box hidden"></div>
+        <div class="field mt-auto">
+          <button class="btn btn-primary full-width" id="btnStep1Next" disabled onclick="goStep(2)">
+            Next: Paint Mask →
+          </button>
+        </div>
+      </section>
+
+      <!-- ─── Step 2: Mask ──────────────────────────────── -->
+      <section id="panel2" class="panel hidden">
+        <h2>Step 2 — Paint Mask</h2>
+        <p class="hint">Paint over the text you want to <strong>erase</strong>. Or use <strong>Auto-Detect</strong> to let AI find the text for you.</p>
+
+        <!-- Auto-Detect strip -->
+        <div class="auto-detect-strip">
+          <button class="btn btn-accent full-width" id="btnAutoDetect" onclick="runAutoDetect()">
+            🔍 Auto-Detect Text
+          </button>
+          <div id="autoDetectResult" class="auto-detect-info hidden"></div>
+        </div>
+
+        <div class="field-divider"><span>or paint manually</span></div>
+
+        <div class="tool-row">
+          <button class="tool-btn active" id="btnBrush" onclick="setTool('brush')" title="Brush">🖌</button>
+          <button class="tool-btn" id="btnEraser" onclick="setTool('eraser')" title="Eraser">🧹</button>
+          <button class="tool-btn" onclick="undoMask()" title="Undo">↩</button>
+          <button class="tool-btn" onclick="redoMask()" title="Redo">↪</button>
+          <button class="tool-btn danger" onclick="clearMask()" title="Clear mask">✕</button>
+        </div>
+
+        <div class="field">
+          <label>Brush size <span id="brushSizeVal">24</span>px</label>
+          <input type="range" id="brushSize" min="4" max="120" value="24"
+                 oninput="document.getElementById('brushSizeVal').textContent=this.value">
+        </div>
+
+        <div class="field">
+          <label>Mask opacity <span id="maskOpVal">50</span>%</label>
+          <input type="range" id="maskOp" min="10" max="90" value="50"
+                 oninput="updateMaskOpacity(this.value)">
+        </div>
+
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="checkbox" id="chkShowMask" checked onchange="toggleMaskVisibility(this.checked)">
+            Show mask overlay
+          </label>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-secondary" onclick="goStep(1)">← Back</button>
+          <button class="btn btn-primary" id="btnStep2Next" onclick="goStep(3)">Next: Inpaint →</button>
+        </div>
+      </section>
+
+      <!-- ─── Step 3: Inpaint ───────────────────────────── -->
+      <section id="panel3" class="panel hidden">
+        <h2>Step 3 — Inpaint Background</h2>
+        <p class="hint">AI fills in the masked region to reconstruct the background.</p>
+
+        <div class="field">
+          <label>Engine</label>
+          <div class="segmented" id="engineSeg">
+            <button class="seg-btn active" data-val="iopaint" onclick="selectEngine(this)">IOPaint</button>
+            <button class="seg-btn" data-val="comfyui" onclick="selectEngine(this)">ComfyUI</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Model</label>
+          <select id="modelSelect">
+            <option value="lama">LaMa — fast &amp; seamless (recommended)</option>
+            <option value="mat">MAT — complex backgrounds</option>
+            <option value="zits">ZITS — fine details</option>
+            <option value="sd-inpainting">SD Inpainting — Stable Diffusion</option>
+          </select>
+        </div>
+
+        <div class="field" id="promptField" style="display:none">
+          <label>Positive Prompt</label>
+          <textarea id="inpaintPrompt" rows="2"
+            placeholder="seamless decorative background, high detail…"></textarea>
+        </div>
+
+        <div class="field" id="negPromptField" style="display:none">
+          <label>Negative Prompt</label>
+          <textarea id="inpaintNeg" rows="2"
+            placeholder="text, watermark, blurry…"></textarea>
+        </div>
+
+        <div id="inpaintProgress" class="progress-wrap hidden">
+          <div class="progress-bar"><div id="progressFill" class="progress-fill"></div></div>
+          <span id="progressLabel">Running…</span>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-secondary" onclick="goStep(2)">← Back</button>
+          <button class="btn btn-success full-width" id="btnInpaint" onclick="runInpaint()">
+            ✨ Run Inpainting
+          </button>
+        </div>
+        <button class="btn btn-secondary full-width mt-sm" id="btnStep3Next"
+                style="display:none" onclick="goStep(4)">
+          Next: Add Text →
+        </button>
+      </section>
+
+      <!-- ─── Step 4: Add Text ──────────────────────────── -->
+      <section id="panel4" class="panel hidden">
+        <h2>Step 4 — Add Text</h2>
+        <p class="hint">Click on the canvas to position, then style and apply your text.</p>
+
+        <!-- Sampled original text (auto-filled from Step 3) -->
+        <div id="sampleBox" class="sample-box hidden">
+          <div class="sample-label">Original text reference:</div>
+          <img id="sampleImg" class="sample-img" alt="">
+          <div id="sampleMeta" class="sample-meta"></div>
+          <button class="btn btn-sm" onclick="applySampleStyle()">↺ Re-apply sampled style</button>
+        </div>
+
+        <div class="field">
+          <label>Text</label>
+          <textarea id="textInput" rows="3" placeholder="Enter your text here…"
+                    oninput="updateTextPreview()"></textarea>
+        </div>
+
+        <div class="two-col">
+          <div class="field">
+            <label>Font size <span id="fontSizeVal">48</span>px</label>
+            <input type="range" id="fontSize" min="8" max="300" value="48"
+                   oninput="document.getElementById('fontSizeVal').textContent=this.value; updateTextPreview()">
+          </div>
+          <div class="field">
+            <label>Color</label>
+            <input type="color" id="textColor" value="#000000" oninput="updateTextPreview()">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Font family</label>
+          <select id="fontFamily" onchange="updateTextPreview()">
+            <option value="">System default</option>
+          </select>
+          <button class="btn btn-sm" onclick="loadFonts()" style="margin-top:4px">Load fonts</button>
+        </div>
+
+        <div class="tool-row">
+          <button class="toggle-btn" id="btnBold"   onclick="toggleStyle('bold')"  >B</button>
+          <button class="toggle-btn italic" id="btnItalic" onclick="toggleStyle('italic')">I</button>
+          <button class="toggle-btn" id="btnAlignL" onclick="setAlign('left')"  >⬅</button>
+          <button class="toggle-btn active" id="btnAlignC" onclick="setAlign('center')">⬛</button>
+          <button class="toggle-btn" id="btnAlignR" onclick="setAlign('right')" >➡</button>
+        </div>
+
+        <div class="two-col">
+          <div class="field">
+            <label>Stroke width <span id="strokeWVal">0</span>px</label>
+            <input type="range" id="strokeWidth" min="0" max="20" value="0"
+                   oninput="document.getElementById('strokeWVal').textContent=this.value; updateTextPreview()">
+          </div>
+          <div class="field">
+            <label>Stroke color</label>
+            <input type="color" id="strokeColor" value="#ffffff" oninput="updateTextPreview()">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Opacity <span id="textOpVal">100</span>%</label>
+          <input type="range" id="textOpacity" min="10" max="100" value="100"
+                 oninput="document.getElementById('textOpVal').textContent=this.value; updateTextPreview()">
+        </div>
+
+        <div class="field">
+          <label>Position (click canvas to set)</label>
+          <div class="pos-display">
+            X: <input type="number" id="textX" value="50" onchange="updateTextPreview()">
+            Y: <input type="number" id="textY" value="50" onchange="updateTextPreview()">
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="checkbox" id="chkAutoFit" checked>
+            <span>📐 Auto-fit text to masked area (scales font size)</span>
+          </label>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-secondary" onclick="goStep(3)">← Back</button>
+          <button class="btn btn-success" id="btnApplyText" onclick="applyText()">
+            ✓ Apply Text
+          </button>
+        </div>
+        <button class="btn btn-primary full-width mt-sm" id="btnAIReplace" onclick="rePlaceAIText()">
+          🤖 Reset to AI Auto-Place
+        </button>
+        <button class="btn btn-secondary full-width mt-sm" onclick="undoText()">↩ Undo Last Text</button>
+        <button class="btn btn-primary full-width mt-sm" onclick="goStep(5)">Next: Save →</button>
+      </section>
+
+      <!-- ─── Step 5: Save ──────────────────────────────── -->
+      <section id="panel5" class="panel hidden">
+        <h2>Step 5 — Save</h2>
+        <p class="hint">Save the final image to <code>output/</code> or download directly.</p>
+
+        <div class="field">
+          <label>Filename</label>
+          <input type="text" id="saveFilename" placeholder="my-edited-image.png">
+        </div>
+
+        <div class="field">
+          <label>Compare</label>
+          <div class="segmented" id="compareSeg">
+            <button class="seg-btn active" data-val="final" onclick="showComparison('final')">Final</button>
+            <button class="seg-btn" data-val="original" onclick="showComparison('original')">Original</button>
+            <button class="seg-btn" data-val="inpainted" onclick="showComparison('inpainted')">Inpainted</button>
+          </div>
+        </div>
+
+        <div class="btn-row column">
+          <button class="btn btn-success full-width" onclick="saveImage()">
+            💾 Save to output/
+          </button>
+          <button class="btn btn-primary full-width" id="btnDownload" style="display:none"
+                  onclick="downloadImage()">
+            ⬇ Download
+          </button>
+        </div>
+
+        <div id="saveResult" class="info-box hidden"></div>
+
+        <div class="btn-row mt-sm">
+          <button class="btn btn-secondary" onclick="goStep(4)">← Back</button>
+          <button class="btn btn-secondary" onclick="startOver()">🔄 Start Over</button>
+        </div>
+      </section>
+
+      <!-- ─── Batch Mode Panel ─────────────────────────── -->
+      <section id="panelBatch" class="panel hidden">
+        <h2>⚡ Batch Text Replacement</h2>
+        <p class="hint">
+          Automatically process <strong>all images</strong> in a folder — detect text,
+          erase it, and re-render replacement text in the original font &amp; position.
+        </p>
+
+        <!-- Folder selector -->
+        <div class="field">
+          <label>Source folder</label>
+          <div class="folder-input-row">
+            <input type="text" id="batchFolder" value="" placeholder="~/Desktop">
+            <button class="btn btn-sm" onclick="batchScanFolder()">Scan</button>
+          </div>
+        </div>
+
+        <!-- Scanned images list -->
+        <div id="batchScanResult" class="batch-scan-list hidden"></div>
+
+        <!-- Replacement text -->
+        <div class="field">
+          <label>Replacement text <span class="hint-chip">applies to all detected text</span></label>
+          <textarea id="batchReplaceText" rows="2"
+            placeholder="Enter the text to insert in every detected region…"></textarea>
+        </div>
+
+        <!-- Per-region overrides (populated after detection) -->
+        <div id="batchRegionOverrides" class="batch-region-overrides hidden">
+          <div class="field-label-row">
+            <label>Per-region overrides <span class="hint-chip">optional</span></label>
+            <button class="btn btn-sm" onclick="toggleRegionOverrides()">Hide</button>
+          </div>
+          <div id="batchOverridesList"></div>
+        </div>
+
+        <!-- Manual font overrides -->
+        <div class="two-col mt-sm">
+          <div class="field">
+            <label>Font size override <span class="hint-chip">px, optional</span></label>
+            <input type="number" id="batchFontSize" placeholder="auto" min="6" max="300">
+          </div>
+          <div class="field">
+            <label>Color override <span class="hint-chip">optional</span></label>
+            <input type="color" id="batchColor" value="#000000">
+            <label class="checkbox-label" style="margin-top:4px">
+              <input type="checkbox" id="batchColorAuto" checked onchange="toggleBatchColorAuto(this.checked)">
+              Auto-detect
+            </label>
+          </div>
+        </div>
+
+        <!-- Inpaint engine -->
+        <div class="two-col">
+          <div class="field">
+            <label>Inpaint model</label>
+            <select id="batchModel">
+              <option value="lama">LaMa (recommended)</option>
+              <option value="mat">MAT</option>
+              <option value="zits">ZITS</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Inpaint prompt <span class="hint-chip">optional</span></label>
+            <input type="text" id="batchPrompt" placeholder="seamless background…">
+          </div>
+        </div>
+
+        <!-- Run button + progress -->
+        <div id="batchProgress" class="progress-wrap hidden">
+          <div class="progress-bar"><div id="batchProgressFill" class="progress-fill"></div></div>
+          <span id="batchProgressLabel">Processing…</span>
+        </div>
+
+        <button class="btn btn-success full-width mt-sm" id="btnRunBatch" onclick="runBatch()">
+          🚀 Run Batch Replace
+        </button>
+
+        <!-- Results -->
+        <div id="batchResults" class="batch-results hidden"></div>
+
+        <!-- Log viewer -->
+        <div class="field mt-sm">
+          <button class="btn btn-secondary full-width" onclick="viewBatchLog()">
+            📋 View Log File
+          </button>
+          <div id="batchLogView" class="batch-log hidden"></div>
+        </div>
+      </section>
+
+    </aside>
+  </main>
+
+  <!-- ── Replacement Text Modal ─────────────────────────── -->
+  <div id="replaceModal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span class="modal-icon">✏️</span>
+        <h3>What should the new text say?</h3>
+      </div>
+      <div class="modal-body">
+        <p class="modal-hint">
+          The original text was detected by AI vision. Type the <strong>replacement text</strong> below.
+          It will be placed inside the masked area in the same font &amp; color, auto-fitted to the size.
+        </p>
+
+        <div class="field">
+          <label>Original text (detected by Groq OCR)</label>
+          <div id="modalOriginalText" class="original-text-box">—</div>
+        </div>
+
+        <div class="field">
+          <label>New text to place in masked area</label>
+          <textarea id="modalNewText" rows="3"
+                    placeholder="Type the corrected / replacement text…"
+                    autofocus></textarea>
+        </div>
+
+        <div id="modalSampleSummary" class="info-box" style="margin-top:8px"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeReplaceModal(false)">
+          Skip (place no text)
+        </button>
+        <button class="btn btn-success" id="modalPlaceBtn" onclick="confirmReplaceText()">
+          ✨ Place Text in Masked Area
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Auto-Replace Modal (after auto-detect) ───────────── -->
+  <div id="autoReplaceModal" class="modal-overlay hidden">
+    <div class="modal-card modal-card-wide">
+      <div class="modal-header">
+        <span class="modal-icon">🔍</span>
+        <h3>Auto-Detected Text Regions</h3>
+      </div>
+      <div class="modal-body">
+        <p class="modal-hint">
+          AI detected <strong id="arModalCount">0</strong> text region(s).
+          Enter replacement text for each region — or one global replacement applied to all.
+        </p>
+
+        <!-- Global replacement -->
+        <div class="field">
+          <label>Global replacement <span class="hint-chip">applies to all regions without a custom value</span></label>
+          <input type="text" id="arGlobalText" placeholder="Enter replacement text…"
+                 oninput="arSyncGlobal(this.value)">
+        </div>
+
+        <!-- Per-region table -->
+        <div id="arRegionList" class="ar-region-list"></div>
+
+        <!-- Inpaint model -->
+        <div class="two-col" style="margin-top:12px">
+          <div class="field">
+            <label>Inpaint model</label>
+            <select id="arModel">
+              <option value="lama">LaMa (recommended)</option>
+              <option value="mat">MAT</option>
+              <option value="zits">ZITS</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Font size override <span class="hint-chip">px, blank = auto</span></label>
+            <input type="number" id="arFontSize" placeholder="auto" min="6" max="300">
+          </div>
+        </div>
+        <div class="field">
+          <label>Color override <span class="hint-chip">blank = auto-detect from image</span></label>
+          <input type="color" id="arColor" value="#000000">
+          <label class="checkbox-label" style="margin-top:4px">
+            <input type="checkbox" id="arColorAuto" checked onchange="toggleArColorAuto(this.checked)">
+            Auto-detect color from original
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeAutoReplaceModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="applyAutoReplace()">
+          ✓ Apply Replacements
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Toast notification ─────────────────────────────── -->
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- ── Loading overlay ────────────────────────────────── -->
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="spinner"></div>
+    <div id="loadingMsg" class="loading-msg">Processing…</div>
+  </div>
+
+  <script src="/static/js/editor.js"></script>
+</body>
+</html>
