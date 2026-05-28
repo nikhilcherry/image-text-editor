@@ -47,6 +47,9 @@
     <div class="step batch-tab" data-step="batch" onclick="goStep('batch')">
       <span class="step-num">⚡</span><span class="step-lbl">Batch</span>
     </div>
+    <div class="step find-tab" data-step="findreplace" onclick="goStep('findreplace')">
+      <span class="step-num">🔤</span><span class="step-lbl">Find &amp; Replace</span>
+    </div>
   </nav>
 
   <!-- ── Main Layout ────────────────────────────────────── -->
@@ -424,6 +427,85 @@
             📋 View Log File
           </button>
           <div id="batchLogView" class="batch-log hidden"></div>
+        </div>
+      </section>
+
+      <!-- ─── Find & Replace Word Panel ─────────────────── -->
+      <section id="panelFindReplace" class="panel hidden">
+        <h2>🔤 Find &amp; Replace Word</h2>
+        <p class="hint">
+          Upload an image, say what to find and what to put in its place.
+          AI locates the word automatically — no masking needed.
+        </p>
+
+        <!-- Image upload -->
+        <div id="frDropZone" class="fr-drop-zone">
+          <div class="drop-content">
+            <div class="drop-icon">⬆</div>
+            <p>Drop image here</p>
+            <p class="drop-sub">or</p>
+            <label class="btn btn-primary" for="frFileInput">Choose File</label>
+            <input type="file" id="frFileInput" accept="image/*" style="display:none">
+            <p class="drop-hint">PNG · JPG · WEBP · BMP · TIFF</p>
+          </div>
+        </div>
+
+        <div id="frPreviewWrap" class="fr-preview-wrap hidden">
+          <div class="fr-preview-header">
+            <span id="frFileName" class="fr-filename"></span>
+            <button class="btn btn-sm" onclick="frReset()">✕ Change image</button>
+          </div>
+          <img id="frPreview" class="fr-preview-img" alt="preview">
+        </div>
+
+        <!-- Find / Replace pairs -->
+        <div class="field mt-sm">
+          <label>Find → Replace pairs</label>
+          <div id="frPairList" class="fr-pair-list"></div>
+          <button class="btn btn-sm mt-sm" onclick="frAddPair()">＋ Add another pair</button>
+        </div>
+
+        <!-- Options row -->
+        <div class="two-col mt-sm">
+          <div class="field">
+            <label>Inpaint model</label>
+            <select id="frModel">
+              <option value="mat">MAT — documents (default)</option>
+              <option value="lama">LaMa — fast &amp; seamless</option>
+              <option value="zits">ZITS — fine detail</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Font override <span class="hint-chip">optional</span></label>
+            <input type="text" id="frFont" placeholder="e.g. Arial">
+          </div>
+        </div>
+        <div class="field">
+          <label class="checkbox-label">
+            <input type="checkbox" id="frAutoRotate" checked>
+            Auto-straighten rotated / skewed images
+          </label>
+        </div>
+
+        <!-- Run button -->
+        <button class="btn btn-success full-width mt-sm" id="btnRunFR" onclick="runFindReplace()">
+          🔤 Find &amp; Replace
+        </button>
+
+        <!-- Result -->
+        <div id="frResult" class="fr-result hidden">
+          <div class="fr-result-header">
+            <span class="fr-result-title">Result</span>
+          </div>
+          <img id="frResultImg" class="fr-result-img" alt="result">
+          <div id="frSummary" class="fr-summary"></div>
+          <a id="frDownloadBtn" class="btn btn-primary full-width mt-sm"
+             download="word_replaced.png" target="_blank">
+            ⬇ Download Result
+          </a>
+          <button class="btn btn-secondary full-width mt-sm" onclick="frStartOver()">
+            🔄 Replace in Another Image
+          </button>
         </div>
       </section>
 

@@ -1643,6 +1643,187 @@ async function applyAutoReplace() {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// FIND & REPLACE WORD PANEL
+// ═══════════════════════════════════════════════════════════════
+
+// ── goStep patch for 'findreplace' ───────────────────────────
+(function _patchGoStepForFindReplace() {
+  const _prev = goStep;
+  goStep = function goStepFR(n) {
+    if (n === 'findreplace') {
+      document.querySelectorAll('.panel').forEach(p => p.classList.add('hidden'));
+      document.querySelectorAll('.step').forEach(s => s.classList.remove('active', 'done'));
+      document.querySelector('.step.find-tab')?.classList.add('active');
+      document.getElementById('panelFindReplace').classList.remove('hidden');
+      S.currentStep = 'findreplace';
+      _initFindReplacePanel();
+      return;
+    }
+    document.querySelector('.step.find-tab')?.classList.remove('active');
+    _prev(n);
+  };
+})();
+
+// ── State ─────────────────────────────────────────────────────
+const FR = {
+  file:       null,   // File object for the selected image
+  pairCount:  0,      // running id for pair rows
+};
+
+// ── Init (called once when the panel is first shown) ──────────
+let _frInited = false;
+function _initFindReplacePanel() {
+  if (_frInited) return;
+  _frInited = true;
+
+  // Drop zone
+  const zone = document.getElementById('frDropZone');
+  zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', ()  => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f) _frSelectFile(f);
+  });
+  zone.addEventListener('click', () => document.getElementById('frFileInput').click());
+
+  document.getElementById('frFileInput').addEventListener('change', e => {
+    if (e.target.files[0]) _frSelectFile(e.target.files[0]);
+  });
+
+  // Start with one blank pair
+  frAddPair();
+}
+
+// ── File selection ────────────────────────────────────────────
+function _frSelectFile(file) {
+  FR.file = file;
+  const url = URL.createObjectURL(file);
+  document.getElementById('frPreview').src       = url;
+  document.getElementById('frFileName').textContent = file.name;
+  document.getElementById('frDropZone').classList.add('hidden');
+  document.getElementById('frPreviewWrap').classList.remove('hidden');
+  document.getElementById('frResult').classList.add('hidden');
+}
+
+function frReset() {
+  FR.file = null;
+  document.getElementById('frPreview').src = '';
+  document.getElementById('frDropZone').classList.remove('hidden');
+  document.getElementById('frPreviewWrap').classList.add('hidden');
+  document.getElementById('frResult').classList.add('hidden');
+  document.getElementById('frFileInput').value = '';
+}
+
+function frStartOver() {
+  frReset();
+  document.getElementById('frPairList').innerHTML = '';
+  FR.pairCount = 0;
+  frAddPair();
+}
+
+// ── Pair management ───────────────────────────────────────────
+function frAddPair() {
+  const list = document.getElementById('frPairList');
+  const id   = ++FR.pairCount;
+  const row  = document.createElement('div');
+  row.className = 'fr-pair-row';
+  row.dataset.id = id;
+  row.innerHTML  = `
+    <input type="text" class="fr-find"    placeholder="Find…"         autocomplete="off">
+    <span  class="fr-arrow">→</span>
+    <input type="text" class="fr-replace" placeholder="Replace with…" autocomplete="off">
+    <button class="btn-icon danger" title="Remove pair"
+            onclick="this.closest('.fr-pair-row').remove()">✕</button>
+  `;
+  list.appendChild(row);
+  row.querySelector('.fr-find').focus();
+}
+
+// ── Run ───────────────────────────────────────────────────────
+async function runFindReplace() {
+  if (!FR.file) { toast('Upload an image first.', 'warn'); return; }
+
+  // Collect pairs
+  const pairs = [];
+  document.querySelectorAll('.fr-pair-row').forEach(row => {
+    const find    = row.querySelector('.fr-find').value.trim();
+    const replace = row.querySelector('.fr-replace').value.trim();
+    if (find) pairs.push({ find, replace });
+  });
+  if (!pairs.length) { toast('Add at least one word to find.', 'warn'); return; }
+
+  const model      = document.getElementById('frModel').value;
+  const font       = document.getElementById('frFont').value.trim();
+  const autoRotate = document.getElementById('frAutoRotate').checked;
+
+  showLoading('Finding and replacing text…');
+  document.getElementById('btnRunFR').disabled = true;
+
+  const fd = new FormData();
+  fd.append('image',       FR.file);
+  fd.append('pairs',       JSON.stringify(pairs));
+  fd.append('model',       model);
+  fd.append('auto_rotate', autoRotate ? 'true' : 'false');
+  if (font) fd.append('font', font);
+
+  try {
+    const res  = await fetch('/api/replace-word', { method: 'POST', body: fd });
+    const data = await res.json();
+    hideLoading();
+
+    if (data.status === 'success') {
+      // Show result image
+      const imgEl = document.getElementById('frResultImg');
+      imgEl.src   = data.image_url + '?t=' + Date.now();
+      imgEl.onload = () => {
+        document.getElementById('frResult').classList.remove('hidden');
+        imgEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      };
+
+      // Build summary HTML
+      let html = '';
+      if (data.regions && data.regions.length) {
+        data.regions.forEach(r => {
+          html += `<div class="fr-region-row">
+            <span class="fr-badge find">${_esc(r.find)}</span>
+            <span class="fr-arrow-sm">→</span>
+            <span class="fr-badge repl">${_esc(r.replace)}</span>
+            <span class="fr-ocr-tag">${r.ocr || ''}</span>
+          </div>`;
+        });
+      }
+      if (data.not_found && data.not_found.length) {
+        html += `<p class="warn-text mt-sm">Not found: ${data.not_found.map(_esc).join(', ')}</p>`;
+      }
+      document.getElementById('frSummary').innerHTML = html;
+
+      // Wire download link
+      document.getElementById('frDownloadBtn').href = data.image_url;
+
+      toast(`✓ Replaced ${data.replaced} word(s)`, 'success');
+
+    } else if (data.status === 'no_match') {
+      const detected = (data.detected || []).slice(0, 12).join(', ');
+      toast(`No match found. Detected words: ${detected || '(none)'}`, 'warn');
+
+    } else {
+      toast(data.error || 'Replace failed', 'error');
+    }
+
+  } catch (err) {
+    hideLoading();
+    toast('Network error: ' + err.message, 'error');
+  } finally {
+    document.getElementById('btnRunFR').disabled = false;
+  }
+}
+
+function _esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 // ── Toast ─────────────────────────────────────────────────────
 let _toastTimer;
 function toast(msg, type = '') {

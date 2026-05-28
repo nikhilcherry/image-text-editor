@@ -855,6 +855,102 @@ def batch_scan():
     })
 
 
+# ═══════════════════════════════════════════════════════════════
+# FIND & REPLACE WORD — browser-facing endpoint
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/replace-word")
+def replace_word_endpoint():
+    """
+    Find a word in an uploaded image and replace it (no manual masking).
+
+    Accepts multipart/form-data:
+      image       : image file (PNG / JPG / WEBP / BMP / TIFF)
+      pairs       : JSON string  [{"find": "...", "replace": "..."}, …]
+      model       : "mat" | "lama" | "zits"  (default "mat")
+      font        : optional font family name override
+      auto_rotate : "true" | "false"         (default "true")
+
+    Returns JSON:
+      status      : "success" | "no_match"
+      session_id  : str   (use /api/session/<id>/word_replaced.png to fetch)
+      image_url   : str
+      replaced    : int
+      not_found   : [str, …]
+      regions     : [{find, replace, bbox, font, color, bold, ocr}, …]
+    """
+    from word_replace import WordReplacer
+
+    if "image" not in request.files:
+        return jsonify({"error": "No image file"}), 400
+
+    f = request.files["image"]
+    if not f.filename or not _ext_ok(f.filename):
+        return jsonify({"error": "Unsupported file type"}), 400
+
+    pairs_raw     = request.form.get("pairs", "[]")
+    model         = request.form.get("model", "mat")
+    font_override = request.form.get("font", "")
+    auto_rotate   = request.form.get("auto_rotate", "true").lower() != "false"
+
+    try:
+        pairs_list   = json.loads(pairs_raw)
+        replacements = {p["find"]: p.get("replace", "") for p in pairs_list if p.get("find")}
+    except Exception as e:
+        return jsonify({"error": f"Invalid pairs JSON: {e}"}), 400
+
+    if not replacements:
+        return jsonify({"error": "No find/replace pairs provided"}), 400
+
+    # Save uploaded image to a fresh session
+    session_id = str(uuid.uuid4())
+    sess       = _session_path(session_id)
+
+    from PIL import Image as _PIL
+    try:
+        img = _PIL.open(f.stream).convert("RGB")
+        src = sess / "source.png"
+        img.save(src)
+    except Exception as e:
+        return jsonify({"error": f"Could not read image: {e}"}), 400
+
+    out_path = sess / "word_replaced.png"
+
+    log.info("replace-word  session=%s  pairs=%s  model=%s", session_id, replacements, model)
+    try:
+        replacer = WordReplacer(IOPAINT_URL)
+        result   = replacer.replace(
+            image_path    = src,
+            replacements  = replacements,
+            out_path      = out_path,
+            model         = model,
+            font_override = font_override,
+            auto_rotate   = auto_rotate,
+        )
+    except Exception as e:
+        log.error("replace-word error: %s", e)
+        return jsonify({"error": f"Replace failed: {e}"}), 500
+
+    status = result.get("status")
+    if status == "success":
+        return jsonify({
+            "status":     "success",
+            "session_id": session_id,
+            "image_url":  f"/api/session/{session_id}/word_replaced.png",
+            "replaced":   result["replaced"],
+            "not_found":  result.get("not_found", []),
+            "regions":    result.get("regions", []),
+        })
+    elif status == "no_match":
+        return jsonify({
+            "status":    "no_match",
+            "not_found": result.get("not_found", []),
+            "detected":  result.get("detected", []),
+        }), 422
+    else:
+        return jsonify({"error": "Unknown result", "detail": result}), 500
+
+
 # ── Main ──────────────────────────────────────────────────────
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
