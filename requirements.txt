@@ -1,0 +1,40 @@
+# ============================================================
+#  Image Text Editor — Python dependencies (app + CLI tools)
+#  Install:  pip install -r requirements.txt
+# ============================================================
+
+# Web app (Flask UI + API)
+flask>=3.0
+flask-cors>=4.0
+werkzeug>=3.0
+
+# Imaging / numerical / CV
+Pillow>=10.0
+numpy>=1.24
+opencv-python>=4.8
+
+# HTTP (IOPaint client, Gemini OCR) + .env loading
+requests>=2.31
+python-dotenv>=1.0
+
+# Optional: nicer font handling
+fonttools>=4.50
+
+# ------------------------------------------------------------
+# NOT installed by pip here — set up separately:
+#
+# 1) IOPaint  (the inpainting backend / server on port 8080)
+#       pip install iopaint
+#    Big download (pulls in PyTorch). Best in its OWN venv.
+#    Start it with:  iopaint start --model=mat --port=8080
+#
+# 2) Tesseract OCR  (powers replace_word.py word detection)
+#       Linux:    sudo apt install tesseract-ocr
+#       macOS:    brew install tesseract
+#       Windows:  install from https://github.com/UB-Mannheim/tesseract/wiki
+#                 then add its folder (e.g. C:\Program Files\Tesseract-OCR)
+#                 to your PATH so `tesseract` works in a terminal.
+#
+# 3) Gemini API key  (optional fallback OCR for stylised text)
+#       copy .env.example -> .env  and set GEMINI_API_KEY
+# ------------------------------------------------------------

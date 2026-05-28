@@ -85,9 +85,35 @@ python app/fix_one.py tre.png "tree" \
 
 ## 1. Prerequisites — what to install and WHERE
 
-> **TL;DR:** run `./install.sh` once. It creates the virtual-environments and
-> downloads the models into the right folders automatically. The sections below
-> explain what it puts where, so you can fix things by hand if a download fails.
+> **TL;DR (Linux):** run `./install.sh` once. It creates the virtual-environments
+> and downloads the models into the right folders automatically. The sections
+> below explain what it puts where, so you can fix things by hand if a download
+> fails.
+
+### Quick install (any OS, manual)
+
+```bash
+# 1. Python deps for the app + CLI tools
+pip install -r requirements.txt
+
+# 2. Inpainting backend (separate, large — pulls in PyTorch)
+pip install iopaint
+iopaint start --model=mat --port=8080        # leave running in its own terminal
+
+# 3. Tesseract OCR (for replace_word.py)
+#    Linux:   sudo apt install tesseract-ocr
+#    macOS:   brew install tesseract
+#    Windows: installer at https://github.com/UB-Mannheim/tesseract/wiki
+#             then add C:\Program Files\Tesseract-OCR to PATH
+
+# 4. (optional) copy .env.example -> .env and add GEMINI_API_KEY
+```
+
+**Windows note:** use `py -m venv venv && venv\Scripts\activate`, then
+`pip install -r requirements.txt`. Run the Python tools with `python` (not
+`./run.sh`, which is a bash script). Example:
+`python replace_word.py image.png -f cat -r dog`. Tesseract must be installed
+and on PATH, and IOPaint must be running (`iopaint start --model=mat`).
 
 ### a) System packages
 Python 3.10+, git, and the OpenCV runtime libraries + fonts:
