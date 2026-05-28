@@ -25,7 +25,7 @@ echo ""
 
 # ── Start IOPaint server ─────────────────────────────────────
 IOPAINT_PORT=8080
-IOPAINT_MODEL="${IOPAINT_MODEL:-lama}"
+IOPAINT_MODEL="${IOPAINT_MODEL:-mat}"
 
 info "Starting IOPaint ($IOPAINT_MODEL) on port $IOPAINT_PORT..."
 

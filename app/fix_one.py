@@ -19,7 +19,7 @@ from text_overlay import TextOverlay
 from blender import NaturalBlender
 
 
-def run(src_path, out_path, text_bbox, mask_bbox, new_text, model="lama",
+def run(src_path, out_path, text_bbox, mask_bbox, new_text, model="mat",
         font_override=None, bold_override=None):
     src_path, out_path = Path(src_path), Path(out_path)
     work = Path("/tmp/fix_one"); work.mkdir(parents=True, exist_ok=True)
@@ -105,7 +105,7 @@ if __name__ == "__main__":
     ap.add_argument("--bbox", help="text bbox 'x0,y0,x1,y1' (default: auto-detect dark band)")
     ap.add_argument("--font", help="force a font family, e.g. 'Liberation Serif'")
     ap.add_argument("--bold", action="store_true", help="force bold")
-    ap.add_argument("--model", default="lama", help="inpaint model (lama/mat/zits)")
+    ap.add_argument("--model", default="mat", help="inpaint model (mat/lama/zits); default mat")
     a = ap.parse_args()
 
     src = Path(a.src)

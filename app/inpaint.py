@@ -33,6 +33,50 @@ class IOPaintClient:
         except Exception:
             return "unreachable"
 
+    # ── Model query / switch ─────────────────────────────────
+    def current_model(self) -> str:
+        """Return the model name the server currently serves ('' on error)."""
+        try:
+            r = self._session.get(f"{self.base_url}/api/v1/model", timeout=5)
+            if r.status_code == 200:
+                return r.json().get("name", "") or ""
+        except Exception:
+            pass
+        return ""
+
+    def ensure_model(self, model: str) -> str:
+        """
+        Best-effort: switch the IOPaint server to `model` if it isn't already
+        serving it. Runtime switching only works for models the server can load
+        (already cached or downloadable). On failure we keep the current model
+        so inpainting still proceeds. Returns the model actually in use.
+
+        NOTE: the authoritative way to choose a model is at server startup
+        (run.sh IOPAINT_MODEL); this just honours the per-call `model` argument
+        when the server supports switching.
+        """
+        if not model:
+            return self.current_model()
+        cur = self.current_model()
+        if cur == model:
+            return cur
+        try:
+            r = self._session.post(
+                f"{self.base_url}/api/v1/model",
+                json={"name": model}, timeout=300,
+            )
+            if r.status_code == 200:
+                log.info("Switched IOPaint model %s → %s", cur or "?", model)
+                return model
+            log.warning(
+                "Could not switch IOPaint to '%s' (HTTP %d) — using '%s'. "
+                "Start the server with IOPAINT_MODEL=%s for best results.",
+                model, r.status_code, cur, model,
+            )
+        except Exception as e:
+            log.warning("Model switch to '%s' failed (%s) — using '%s'.", model, e, cur)
+        return cur
+
     # ── Main inpaint ─────────────────────────────────────────
     def inpaint(
         self,
@@ -53,6 +97,9 @@ class IOPaintClient:
         Call IOPaint and save the result to output_path.
         Retries once if the server is temporarily busy.
         """
+        # Honour the requested model (best-effort runtime switch).
+        self.ensure_model(model)
+
         # Load & encode image + mask
         img_b64  = self._to_b64(image_path)
         mask_b64 = self._mask_to_b64(mask_path, image_path)

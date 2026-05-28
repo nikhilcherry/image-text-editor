@@ -42,7 +42,7 @@ python app/fix_one.py before.png "name : image" --font "Liberation Serif"
  │  Detect  │ → │  Mask + Erase │ → │  Estimate  │ → │  Render new   │ → │  Blend   │
  │  text    │   │  (inpaint bg) │   │  font/size │   │  text in place│   │  + save  │
  └──────────┘   └───────────────┘   └────────────┘   └───────────────┘   └──────────┘
-   MSER +          IOPaint LaMa        OpenCV +          Pillow, fit to       feather +
+   solid-ink +     IOPaint MAT         OpenCV +          Pillow, fit to       feather +
    Groq OCR        / MAT / ZITS        Groq vision       original bbox        brightness
 ```
 
@@ -83,8 +83,8 @@ later run `./setup/fix_rtx50.sh`.
 
 | Model | Size | Where it must live | How it gets there | Needed for |
 | ----- | ---- | ------------------ | ----------------- | ---------- |
-| **LaMa** | ~200 MB | `models/iopaint_cache/` | auto-downloaded by IOPaint on first run | **Default.** Fast, seamless text removal |
-| **MAT** | ~700 MB | `models/iopaint_cache/` | auto-downloaded on first use | Complex / busy backgrounds |
+| **MAT** | ~700 MB | `models/iopaint_cache/` | auto-downloaded by IOPaint on first run | **Default.** Sharper reconstruction on textured / busy backgrounds |
+| **LaMa** | ~200 MB | `models/iopaint_cache/` | auto-downloaded on first use | Faster, but blurrier on detailed textures |
 | **ZITS** | ~400 MB | `models/iopaint_cache/` | auto-downloaded on first use | Thin strokes, fine detail |
 | **SD 1.5 inpainting** | ~4 GB | `models/checkpoints/sd-v1-5-inpainting.ckpt` | `./setup/download_models.sh` | Optional — full background *regeneration* via ComfyUI / SD engine |
 
@@ -120,8 +120,8 @@ Then open **http://localhost:5000**.
 Pick the IOPaint model at launch:
 
 ```bash
-IOPAINT_MODEL=lama          ./run.sh   # default — fast & seamless
-IOPAINT_MODEL=mat           ./run.sh   # complex backgrounds
+IOPAINT_MODEL=mat           ./run.sh   # default — sharper on textured backgrounds
+IOPAINT_MODEL=lama          ./run.sh   # faster, but blurrier on detail
 IOPAINT_MODEL=zits          ./run.sh   # thin strokes / fine details
 IOPAINT_MODEL=sd-inpainting ./run.sh   # full SD regeneration (needs the 4 GB ckpt)
 ```

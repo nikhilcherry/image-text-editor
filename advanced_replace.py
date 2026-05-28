@@ -70,9 +70,10 @@ def main():
     )
     parser.add_argument(
         "--model",
-        default="lama",
+        default="mat",
         choices=["lama", "mat", "zits", "sd-inpainting"],
-        help="IOPaint model to use (default: lama)",
+        help="IOPaint model to use (default: mat — sharper on textured "
+             "backgrounds; 'lama' is faster but blurrier)",
     )
     parser.add_argument(
         "--prompt",
