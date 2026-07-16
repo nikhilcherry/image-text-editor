@@ -424,6 +424,19 @@ image-text-editor/
 
 ---
 
+## Tests
+
+`tests/` covers the deterministic, non-ML pieces — box-merging geometry,
+CSS-style color parsing, and the serif/skew/font-alias heuristics — with
+plain pytest, no GPU/IOPaint/Groq required:
+
+```bash
+pip install pytest
+pytest tests/ -q
+```
+
+---
+
 ## 6. Troubleshooting
 
 | Symptom | Fix |
