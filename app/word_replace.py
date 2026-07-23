@@ -58,11 +58,24 @@ class WordReplacer:
         hits = [w["bbox"] for w in words if _norm(w["text"]) == nf]
         if hits:
             return hits
-        # substring (handles 'imge' inside a word, or punctuation glued on)
-        hits = [w["bbox"] for w in words
-                if nf in _norm(w["text"]) or _norm(w["text"]) in nf]
-        if hits:
-            return hits
+        # substring (handles punctuation glued onto the OCR'd word, e.g.
+        # "image!" for a search of "image", and OCR having split one real
+        # word across two boxes). Single-word searches only: for a
+        # multi-word `find`, virtually every constituent word is itself a
+        # substring of the full phrase (e.g. "the" in "the quick fox"), so
+        # this tier would hijack the match with just one word's box instead
+        # of ever reaching the multi-word phrase tier below. The reverse
+        # direction (OCR word is a substring of the search term) is also
+        # guarded to len>=3: without it, any short/common OCR token that
+        # happens to appear inside the search word -- "a", "in", "at", "to",
+        # "is" -- would match and get replaced at the wrong location, since
+        # these are extremely common coincidental substrings.
+        if " " not in nf:
+            hits = [w["bbox"] for w in words
+                    if nf in _norm(w["text"])
+                    or (len(_norm(w["text"])) >= 3 and _norm(w["text"]) in nf)]
+            if hits:
+                return hits
         # multi-word phrase: find consecutive words on one line whose join == nf
         if " " in nf:
             toks = nf.split(" ")
